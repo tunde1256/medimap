@@ -1,26 +1,33 @@
 const express = require('express');
-const multer = require('../middleware/mutter'); // Adjust the path according to your structure
-const pharmacyController = require('../controller/pharmacyController'); // Adjust the path according to your structure
-const upload = require('../middleware/mutter');
-
+const multer = require('multer'); // For file uploads
+const pharmacyController = require('../controller/pharmacyController');
 const router = express.Router();
 
-// Route for registering a new pharmacy
+// Adjust the uploads directory as needed
+const upload = multer({ dest: 'uploads/' }).fields([
+  { name: 'license', maxCount: 1 },
+  { name: 'drug_image', maxCount: 1 }
+]);
+
+// Register route
 router.post('/register', upload, pharmacyController.registerPharmacy);
 
-// Route for uploading a drug to a pharmacy
+// Login route
+router.post('/login', pharmacyController.loginPharmacy);
+
+// Forgot password route
+router.post('/forgot-password', pharmacyController.forgotPassword);
+
+// Reset password route
+router.post('/reset-password', pharmacyController.resetPassword);
+
+// Upload drug route
 router.post('/upload-drug', upload, pharmacyController.uploadDrug);
 
-// Route for searching pharmacies by drug name
+// Search pharmacies route
 router.get('/search', pharmacyController.searchPharmacies);
 
-// Route for getting a specific pharmacy by ID
-router.get('/:pharmacyId', pharmacyController.getPharmacy);
-
-// Route for updating a pharmacy's details
-router.put('/:pharmacyId', upload, pharmacyController.updatePharmacy);
-
-// Route for deleting a pharmacy
-router.delete('/:pharmacyId', pharmacyController.deletePharmacy);
+// Get random drugs route
+router.get('/random-drugs', pharmacyController.getRandomDrugs);
 
 module.exports = router;

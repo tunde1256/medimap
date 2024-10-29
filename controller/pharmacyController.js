@@ -1,7 +1,9 @@
 const bcrypt = require('bcrypt');
 const knex = require('../knex'); // Adjust to your Knex configuration path
-const cloudinary = require('../middleware/cloidinary'); // Corrected the Cloudinary config path
+const cloudinary = require('../middleware/cloidinary'); // Corrected Cloudinary config path
 const nodemailer = require('nodemailer'); // Make sure to install nodemailer
+const Pharmacy = require('../model/pharmacyModel');
+const Drug = require('../model/drugModel');
 
 const pharmacyController = {
   // Register a new pharmacy
@@ -34,20 +36,16 @@ const pharmacyController = {
       let drug_image_url = null;
 
       if (req.files) {
-        // Upload license if available
         if (req.files['license']) {
           const licenseResult = await cloudinary.uploader.upload(req.files['license'][0].path);
           license_url = licenseResult.secure_url;
         }
-
-        // Upload drug image if available
         if (req.files['drug_image']) {
           const drugImageResult = await cloudinary.uploader.upload(req.files['drug_image'][0].path);
           drug_image_url = drugImageResult.secure_url;
         }
       }
 
-      // Insert pharmacy record (without using .returning() for MySQL compatibility)
       const [newPharmacyId] = await knex('pharmacies').insert({
         fullname,
         email,
@@ -63,7 +61,6 @@ const pharmacyController = {
         drug_image_url,
       });
 
-      // Retrieve the inserted pharmacy data using the ID
       const newPharmacy = await knex('pharmacies')
         .where({ id: newPharmacyId })
         .select('id', 'fullname', 'email', 'pharmacy_name', 'pharmacy_address')
@@ -82,24 +79,56 @@ const pharmacyController = {
     }
   },
 
+  // Login pharmacy
+  async loginPharmacy(req, res) {
+    const { email, password } = req.body;
 
-  // Forgot password function
+    try {
+      // Validate input
+      if (!email || !password) {
+        return res.status(400).json({ error: 'Email and password are required' });
+      }
+
+      // Find the pharmacy by email with case-insensitive match
+      const pharmacy = await knex('pharmacies').whereRaw('LOWER(email) = ?', [email.toLowerCase()]).first();
+      console.log('Logging in pharmacy:', email);
+      console.log('Retrieved pharmacy from DB:', pharmacy); // This should log the pharmacy data or null
+
+      if (!pharmacy) {
+        return res.status(401).json({ error: 'Invalid email or password' });
+      }
+
+      // Compare the provided password with the hashed password
+      const isPasswordValid = await bcrypt.compare(password, pharmacy.password);
+
+      console.log('Stored hashed password:', pharmacy.password);
+
+      if (!isPasswordValid) {
+        return res.status(401).json({ error: 'Invalid email or password' });
+      }
+
+      // Remove sensitive information from the response
+      const { password: _, ...pharmacyData } = pharmacy; // Exclude the password field
+
+      // Respond with pharmacy data
+      res.status(200).json({ message: 'Login successful', pharmacy: pharmacyData });
+    } catch (error) {
+      console.error('Error during login:', error);
+      res.status(500).json({ error: 'Login failed', details: error.message });
+    }
+  },
+
+  // Forgot password
   async forgotPassword(req, res) {
     const { email } = req.body;
-
     try {
       const pharmacy = await knex('pharmacies').where({ email }).first();
       if (!pharmacy) {
         return res.status(400).json({ error: 'Email not found' });
       }
 
-      // Generate reset token
       const resetToken = generateResetToken();
-
-      // Save the reset token in the database
       await knex('pharmacies').where({ email }).update({ reset_token: resetToken });
-
-      // Send email with reset link
       await sendResetPasswordEmail(email, resetToken);
 
       res.status(200).json({ message: 'Reset password email sent' });
@@ -108,21 +137,16 @@ const pharmacyController = {
     }
   },
 
-  // Reset password function
+  // Reset password
   async resetPassword(req, res) {
     const { token, newPassword } = req.body;
-
     try {
-      // Find pharmacy with the reset token
       const pharmacy = await knex('pharmacies').where({ reset_token: token }).first();
       if (!pharmacy) {
         return res.status(400).json({ error: 'Invalid token' });
       }
 
-      // Hash the new password
       const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-      // Update the password and clear the reset token
       await knex('pharmacies').where({ id: pharmacy.id }).update({
         password: hashedPassword,
         reset_token: null,
@@ -134,23 +158,20 @@ const pharmacyController = {
     }
   },
 
-  // Upload a drug to a pharmacy
+  // Upload drug
   async uploadDrug(req, res) {
-    const { name, location, drug_name, amount } = req.body; // Get parameters from request body
+    const { name, location, drug_name, amount } = req.body;
 
     try {
-      // Ensure required fields are provided
       if (!name || !location || !drug_name || !amount) {
         return res.status(400).json({ error: 'All fields are required: pharmacy name, location, drug name, and amount.' });
       }
 
-      // Check if the pharmacy exists by name
       const pharmacy = await knex('pharmacies').where({ pharmacy_name: name }).first();
       if (!pharmacy) {
         return res.status(404).json({ error: 'Pharmacy not found' });
       }
 
-      // Upload drug image if a file is provided
       let drug_image_url = null;
       if (req.files && req.files.drug_image && req.files.drug_image.length > 0) {
         const result = await cloudinary.uploader.upload(req.files.drug_image[0].path);
@@ -159,71 +180,128 @@ const pharmacyController = {
         return res.status(400).json({ error: 'No drug image file provided' });
       }
 
-      // Create a new drug record in the database
       await knex('drugs').insert({
-        pharmacy_id: pharmacy.id, // Use the pharmacy ID
+        pharmacy_id: pharmacy.id,
         location,
         drug_name,
         amount,
         drug_image_url,
       });
 
-      // Respond with success and the new drug image URL
       res.status(200).json({ message: 'Drug uploaded successfully', drug_image_url });
     } catch (error) {
       res.status(500).json({ error: 'Failed to upload drug', details: error.message });
     }
   },
 
-  // Search for pharmacies that have a particular drug
+  // Search pharmacies
   async searchPharmacies(req, res) {
-    // Implementation remains the same
+    try {
+      const { drugName, page = 1, pageSize = 10 } = req.query;
+      const limit = parseInt(pageSize, 10);
+      const offset = (parseInt(page, 10) - 1) * limit;
+
+      if (!drugName) {
+        return res.status(400).json({ error: 'Drug name is required' });
+      }
+
+      // Count total pharmacies with the specified drug
+      const totalPharmaciesResult = await knex('pharmacies')
+        .join('drugs', 'pharmacies.id', 'drugs.pharmacy_id') // Assuming drugs have a foreign key to pharmacies
+        .where('drugs.drug_name', drugName) // Ensure 'drug_name' is the correct column
+        .countDistinct('pharmacies.id as count');
+
+      const totalPharmacies = totalPharmaciesResult[0].count;
+
+      if (totalPharmacies === 0) {
+        return res.status(404).json({ message: 'No pharmacies found with this drug.' });
+      }
+
+      // Retrieve paginated list of pharmacies with the specified drug
+      const pharmacies = await knex('pharmacies')
+        .join('drugs', 'pharmacies.id', 'drugs.pharmacy_id') // Same join as above
+        .where('drugs.drug_name', drugName)
+        .select('pharmacies.*')
+        .limit(limit)
+        .offset(offset);
+
+      res.status(200).json({
+        pharmacies,
+        pagination: {
+          total: parseInt(totalPharmacies, 10),
+          page: parseInt(page, 10),
+          pageSize: limit,
+          totalPages: Math.ceil(totalPharmacies / limit),
+        },
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: 'Server error. Please try again later.' });
+    }
   },
 
-  // Get a specific pharmacy by ID
-  async getPharmacy(req, res) {
-    // Implementation remains the same
-  },
+  // Get random drugs
+  async getRandomDrugs(req, res) {
+    const { page = 1, limit = 10 } = req.query; // Default values for pagination
+    const offset = (page - 1) * limit;
 
-  // Update a pharmacy's details
-  async updatePharmacy(req, res) {
-    // Implementation remains the same
-  },
+    try {
+      const drugs = await knex('drugs')
+        .select('*')
+        .orderByRaw('RAND()') // Randomly order the results
+        .limit(limit)
+        .offset(offset);
 
-  // Delete a pharmacy
-  async deletePharmacy(req, res) {
-    // Implementation remains the same
+      res.status(200).json(drugs);
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to retrieve drugs', details: error.message });
+    }
   },
 };
 
-// Helper function to send registration email
-async function sendRegistrationEmail(email, fullname) {
+// Function to generate a reset token (implementation can vary)
+function generateResetToken() {
+  return Math.random().toString(36).substring(2); // Simple random string
+}
+
+// Function to send registration email (you need to set up nodemailer)
+async function sendRegistrationEmail(email, name) {
   const transporter = nodemailer.createTransport({
-    service: 'Gmail', // or another email service
+    service: 'Gmail',
     auth: {
-      user: process.env.EMAIL_USER, // Your email
-      pass: process.env.EMAIL_PASS, // Your email password or app-specific password
+      user: 'your-email@gmail.com', // Your email
+      pass: 'your-email-password', // Your email password
     },
   });
 
   const mailOptions = {
-    from: process.env.EMAIL_USER,
+    from: 'your-email@gmail.com',
     to: email,
     subject: 'Registration Successful',
-    text: `Hello ${fullname},\n\nThank you for registering your pharmacy. We are glad to have you on board!\n\nBest Regards,\nPharmacy Team`,
+    text: `Hello ${name},\n\nThank you for registering with our pharmacy system!`,
   };
 
   await transporter.sendMail(mailOptions);
 }
 
-// Helper function to send reset password email
+// Function to send reset password email
 async function sendResetPasswordEmail(email, resetToken) {
-  // Implementation remains the same
-}
+  const transporter = nodemailer.createTransport({
+    service: 'Gmail',
+    auth: {
+      user: 'your-email@gmail.com',
+      pass: 'your-email-password',
+    },
+  });
 
-// Implement your token generation logic
-function generateResetToken() {
-  return Math.random().toString(36).substring(2);
+  const mailOptions = {
+    from: 'your-email@gmail.com',
+    to: email,
+    subject: 'Password Reset',
+    text: `You requested a password reset. Use this token: ${resetToken}`,
+  };
+
+  await transporter.sendMail(mailOptions);
 }
 
 module.exports = pharmacyController;
