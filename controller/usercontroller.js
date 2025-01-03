@@ -20,7 +20,7 @@ const userController = {
   async create(req, res) {
     const { full_name, email, phone_number, password, confirm_password, role } = req.body;
   
-    if (!full_name || !email || !phone_number || !password || !confirm_password || !role) {
+    if (!full_name || !email || !phone_number || !password || !confirm_password ) {
       return res.status(400).json({ error: 'All fields are required' });
     }
   
