@@ -1,60 +1,64 @@
 require('dotenv').config();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const User = require('../model/userModel'); // Ensure the correct path to the User model
+const User = require('../model/userModel'); 
 const { promisify } = require('util');
-const nodemailer = require('nodemailer'); // Import nodemailer
-const crypto = require('crypto'); // Import crypto for generating secure random codes
-
-// A temporary store for reset codes (you might want to store this in the database or use a cache like Redis)
+const nodemailer = require('nodemailer'); 
+const crypto = require('crypto'); 
 const resetCodes = {}; 
-const jwt_secret1 = process.env.jwt_secret; // Use environment variable for JWT secret
+const jwt_secret1 = process.env.jwt_secret; 
 
-// Configure nodemailer transport for sending emails
 const transporter = nodemailer.createTransport({
-  service: 'gmail', // or any other email service provider
+  service: 'gmail', 
   auth: {
-    user: process.env.EMAIL_USER, // Use environment variables for security
-    pass: process.env.EMAIL_PASS, // Use environment variables for security
+    user: process.env.EMAIL_USER, 
+    pass: process.env.EMAIL_PASS, 
   },
 });
 
 const userController = {
   async create(req, res) {
-    const { full_name, email, phone_number, password, confirm_password,role } = req.body;
-
-    // Validate that the passwords match
+    const { full_name, email, phone_number, password, confirm_password, role } = req.body;
+  
+    if (!full_name || !email || !phone_number || !password || !confirm_password || !role) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+  
     if (password !== confirm_password) {
       return res.status(400).json({ error: 'Passwords do not match' });
     }
-
+  
     try {
-      // Hash the password
       const hashedPassword = await bcrypt.hash(password, 10);
-      
-      // Create a new user without confirm_password
-      const user = new User(full_name, email, phone_number, hashedPassword,role);
-      
-      // Insert the user into the database
-      await User.create(user);
-
-      // Send a welcome email
+  
+      const user = { full_name, email, phone_number, password: hashedPassword, role };
+      const createdUser = await User.create(user);
+  
       const mailOptions = {
-        from: process.env.EMAIL_USER, // Use environment variable for sender
+        from: process.env.EMAIL_USER,
         to: email,
-        subject: 'Welcome to Medimap!',
+        subject: 'Welcome to MediApp!',
         text: `Hi ${full_name},\n\nThank you for registering at MediApp!`,
       };
-
+  
       await transporter.sendMail(mailOptions);
-
-      res.status(201).json({ message: 'User created successfully and email sent' });
+  
+      res.status(201).json({
+        user: {
+          id: createdUser.id,
+          full_name: createdUser.full_name,
+          email: createdUser.email,
+          phone_number: createdUser.phone_number,
+          role: createdUser.role,
+        },
+        message: 'User created successfully and email sent',
+      });
     } catch (error) {
-      res.status(400).json({ error: error.message });
+      res.status(500).json({ error: `An error occurred: ${error.message}` });
     }
   },
-
-  async login(req, res) {
+  
+    async login(req, res) {
     const { email, password } = req.body;
 
     try {
@@ -63,13 +67,12 @@ const userController = {
         return res.status(404).json({ error: 'User not found' });
       }
 
-      const isMatch = await bcrypt.compare(password, user.password); // Compare passwords
+      const isMatch = await bcrypt.compare(password, user.password); 
       if (!isMatch) {
         return res.status(401).json({ error: 'Invalid password' });
       }
 
-      // Create JWT token
-      const token = jwt.sign({ userId: user.id }, jwt_secret1, { expiresIn: '1h' });
+      const token = jwt.sign({ userId: user.id }, process.env.jwt_secret1, { expiresIn: '1h' });
       res.status(200).json({ message: 'Login successful', token });
     } catch (error) {
       res.status(400).json({ error: error.message });
@@ -93,26 +96,50 @@ const userController = {
   async update(req, res) {
     const { userId } = req.params;
     const updates = req.body;
-
+  
     try {
-      await User.update(userId, updates);
-      res.status(200).json({ message: 'User updated successfully' });
+      if (!updates || Object.keys(updates).length === 0) {
+        return res.status(400).json({ error: 'No updates provided' });
+      }
+  
+      const updatedRows = await User.update(userId, updates);
+  
+      if (updatedRows === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+  
+      const updatedUser = await User.findById(userId);
+  
+      res.status(200).json({ message: 'User updated successfully', user: updatedUser });
     } catch (error) {
-      res.status(400).json({ error: error.message });
+      res.status(500).json({ error: error.message || 'Failed to update user' });
     }
   },
+  
 
   async delete(req, res) {
     const { userId } = req.params;
-
+  
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+  
     try {
-      await User.delete(userId);
+      console.log(`Attempting to delete user with ID: ${userId}`);
+      const result = await User.delete(userId);
+  
+      console.log(`Delete result: ${result}`);
+      if (result === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+  
       res.status(200).json({ message: 'User deleted successfully' });
     } catch (error) {
-      res.status(400).json({ error: error.message });
+      console.error('Error deleting user:', error);
+      res.status(500).json({ error: error.message || 'Failed to delete user' });
     }
   },
-
+  
 
 
   async requestPasswordReset(req, res) {
@@ -124,13 +151,10 @@ const userController = {
         return res.status(404).json({ error: 'User not found' });
       }
   
-      // Generate a random 6-digit reset code
-      const resetCode = Math.floor(100000 + Math.random() * 900000).toString(); // Generate a 6-digit number
+      const resetCode = Math.floor(100000 + Math.random() * 900000).toString(); 
   
-      // Store the reset code temporarily (use a database for a real application)
       resetCodes[email] = resetCode;
   
-      // Send password reset email with the reset code
       const mailOptions = {
         from: process.env.EMAIL_USER,
         to: email,
@@ -150,7 +174,6 @@ const userController = {
 async resetPassword(req, res) {
   const { email, resetCode, newPassword, confirmPassword } = req.body;
 
-  // Check if the reset code is valid
   if (!resetCodes[email] || resetCodes[email] !== resetCode) {
     return res.status(400).json({ error: 'Invalid or expired reset code' });
   }
@@ -165,13 +188,12 @@ async resetPassword(req, res) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const hashedPassword = await bcrypt.hash(newPassword, 10); // Hash the new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10); 
     await User.update(user.id, { password: hashedPassword });
 
-    // Optionally, clear the reset code after use
+   
     delete resetCodes[email];
 
-    // Send password reset confirmation email
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: email,
@@ -189,17 +211,16 @@ async resetPassword(req, res) {
 
 
 async logout(req, res) {
-  const authHeader = req.headers.authorization; // Get the Authorization header
+  const authHeader = req.headers.authorization;
 
   if (!authHeader) {
     return res.status(400).json({ error: 'No token provided' });
   }
 
-  const token = authHeader.split(' ')[1]; // Extract the token from the header
+  const token = authHeader.split(' ')[1]; 
 
   try {
-    // Invalidate the token by setting a very short expiration (or store a token blacklist)
-    await promisify(jwt.verify)(token, jwt_secret1);
+    await promisify(jwt.verify)(token, process.env.jwt_secret1);
     res.status(200).json({ message: 'Logout successful' });
   } catch (error) {
     res.status(401).json({ error: 'Invalid or expired token' });
