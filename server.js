@@ -1,11 +1,11 @@
-// app.js or index.js
-require('dotenv').config(); // Load environment variables from.env file
+
+require('dotenv').config(); 
 const express = require('express');
-const knex = require('knex'); // Import Knex
+const knex = require('knex'); 
 
-const dbConfig = require('./knexfile'); // Import your database configuration
+const dbConfig = require('./knexfile'); 
 
-const db = knex(dbConfig.development); // Initialize Knex with the development configuration
+const db = knex(dbConfig.development); 
 
 // Connect to the database
 db.raw('SELECT 1+1 AS result').then(() => {
@@ -13,16 +13,16 @@ db.raw('SELECT 1+1 AS result').then(() => {
 }); 
 
 const userRoutes = require('./routes/userRoutes');
-const adminRoutes = require('./routes/adminroutes'); // Import admin routes
+const adminRoutes = require('./routes/adminroutes'); 
 const PharmacyRoutes = require('./routes/phamarcyRoutes')
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json()); // Middleware to parse JSON bodies
-app.use('/api', userRoutes); // Use user routes with a base path
+app.use(express.json()); 
+app.use('/api', userRoutes); 
 app.use('/api/admin', adminRoutes);
-app.use('/api/pharmacy', PharmacyRoutes); // Use pharmacy routes with a base path
+app.use('/api/pharmacy', PharmacyRoutes); 
 
 
 
@@ -31,3 +31,4 @@ app.use('/api/pharmacy', PharmacyRoutes); // Use pharmacy routes with a base pat
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
 });
+
