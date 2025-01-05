@@ -24,10 +24,11 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Add CORS middleware
-app.use(cors());
 
 // Middleware to parse JSON requests
 app.use(express.json());
+
+app.use(cors());
 
 // Routes
 app.use('/api', userRoutes);
