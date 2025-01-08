@@ -7,7 +7,6 @@ class User {
     this.full_name = fullName;
     this.email = email;
     this.phone_number = phoneNumber;
-    this.password = password;
     this.role = role; // Set the role, defaulting to 'user'
   }
 
@@ -18,7 +17,7 @@ class User {
         full_name: user.full_name,
         email: user.email,
         phone_number: user.phone_number,
-        password: user.password,
+        password: user.password, // Hashed password
         role: user.role,
       });
   
